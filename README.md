@@ -3,7 +3,7 @@
 A WebUI / WebUI Forge extension that indexes your generated PNGs, extracts
 prompt tags, LoRAs and model names from PNG metadata, and gives you ranked
 statistics, a tag search and a category system. Adds one tab called
-**Metadata Statistics**. Image files are never modified.
+**Metadata Statistics**. Image files are never modified. For local thumbnails were chosen for performance reasons while the WebUI is running. Each full image from the `outputs` folder is resized to a height of 256 pixels, with the width adjusted proportionally. Each thumbnail takes about 13 KB. In the future, there will be an option to choose between local thumbnails, which are faster but use disk space, and thumbnails generated on run, which are slower but do not require extra disk space.
 
 ## Features
 
@@ -17,7 +17,6 @@ statistics, a tag search and a category system. Adds one tab called
   _Missing category_ or _Any_.
 - Paginated thumbnail gallery with a detail panel.
 - Local SQLite database and on-disk thumbnail cache inside `data/`.
-- Local thumbnails were chosen for performance reasons while the WebUI is running. Each full image from the `outputs` folder is resized to a height of 256 pixels, with the width adjusted proportionally. Each thumbnail takes about 13 KB. In the future, there will be an option to choose between local thumbnails, which are faster but use disk space, and thumbnails generated on run, which are slower but do not require extra disk space.
 
 ## Install
 
