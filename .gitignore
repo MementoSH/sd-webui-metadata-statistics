@@ -1,0 +1,14 @@
+# Runtime data — the indexed database and generated thumbnails
+data/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
