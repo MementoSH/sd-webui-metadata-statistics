@@ -8,19 +8,20 @@ statistics, a tag search and a category system. Adds one tab called
 ## Features
 
 - Manual recursive scan of the outputs folder(s) configured in WebUI.
-- Incremental indexing with a *Force full rescan* option.
+- Incremental indexing with a _Force full rescan_ option.
 - Ranked Top N lists for positive tags, negative tags, LoRAs and models.
 - Tag search with `AND` / `OR` / `NOT`, expert query mode, and optional
   substring matching (e.g. `ellie` finds `ellietlou1`).
 - Categories that group tags and/or LoRAs. An image belongs to a category if
-  any of its tags or LoRAs is assigned to it. Filter search by *In category*,
-  *Missing category* or *Any*.
+  any of its tags or LoRAs is assigned to it. Filter search by _In category_,
+  _Missing category_ or _Any_.
 - Paginated thumbnail gallery with a detail panel.
 - Local SQLite database and on-disk thumbnail cache inside `data/`.
+- Local thumbnails were chosen for performance reasons while the WebUI is running. Each full image from the `outputs` folder is resized to a height of 256 pixels, with the width adjusted proportionally. Each thumbnail takes about 13 KB. In the future, there will be an option to choose between local thumbnails, which are faster but use disk space, and thumbnails generated on run, which are slower but do not require extra disk space.
 
 ## Install
 
-In WebUI: *Extensions, Install from URL*, paste the repo URL.
+In WebUI: _Extensions, Install from URL_, paste the repo URL.
 
 Or manually:
 
@@ -42,24 +43,28 @@ Restart the WebUI. No extra Python packages are required.
 ## Tabs
 
 ### Scan
+
 Walks every PNG under your WebUI outputs paths. Skips files already indexed
-with the same size and mtime unless *Force full rescan* is ticked.
+with the same size and mtime unless _Force full rescan_ is ticked.
 
 ### Statistics
+
 Four ranked tables: positive tags, negative tags, LoRAs, models. A tag that
 appears multiple times in one prompt counts once for that image.
 
 ### Search
+
 - Simple mode: AND, OR, NOT boxes (comma-separated tags).
 - Expert mode: free-form query with `AND`, `OR`, `NOT`, parens, quoted
   phrases, and implicit `AND` between adjacent terms.
-- *Partial match* on by default for substring search.
-- Category filter with *Any*, *In category*, *Missing category*. Use *Missing*
+- _Partial match_ on by default for substring search.
+- Category filter with _Any_, _In category_, _Missing category_. Use _Missing_
   to find images you have not yet labelled.
 - Click a thumbnail to see full prompt, model, LoRAs, categories and the raw
   infotext.
 
 ### Categories
+
 Create / rename / delete categories. Assign tags or LoRAs to them. Image
 membership is recomputed immediately, no rescan needed.
 
