@@ -25,7 +25,7 @@ PAGE_SIZE = 60
 # ---------------------------------------------------------------------------
 
 # Static DOM for the progress bar. Rendered once; never re-rendered by Gradio.
-# JS (registered in build_tab via block.load + _js) mutates the inner nodes
+# JS (registered in build_tab via block.load + js) mutates the inner nodes
 # in-place, so CSS transitions on width can apply and the component never
 # blinks the way a polled gr.HTML / gr.Markdown does.
 _PROGRESS_STATIC_HTML = """
@@ -63,7 +63,7 @@ _PROGRESS_STATIC_HTML = """
 # Page-load script: defines window.msUpdateProgressBar(snap) which mutates the
 # bar's DOM in place. Gradio just keeps a hidden gr.JSON in sync with
 # scanner.get_progress(); its .change event runs this with the new snapshot.
-_PROGRESS_JS_INIT = r"""
+_PROGRESSjs_INIT = r"""
 () => {
   window.msUpdateProgressBar = function(snap) {
     if (!snap) return;
@@ -167,7 +167,7 @@ def _build_scan_tab() -> Tuple[gr.JSON, gr.Markdown]:
             full_rescan = gr.Checkbox(label="Force full rescan", value=False)
             refresh_btn = gr.Button("Refresh status")
         # Static DOM (rendered once). build_tab() wires up periodic polling +
-        # a JS DOM-mutation function — see _PROGRESS_JS_INIT.
+        # a JS DOM-mutation function — see _PROGRESSjs_INIT.
         gr.HTML(_PROGRESS_STATIC_HTML)
         progress_state = gr.JSON(
             value=scanner.get_progress(),
@@ -656,7 +656,7 @@ def build_tab() -> gr.Blocks:
                 _build_categories_tab()
 
         # Register the in-place DOM updater once on page load.
-        block.load(fn=None, inputs=None, outputs=None, _js=_PROGRESS_JS_INIT)
+        block.load(fn=None, inputs=None, outputs=None, js=_PROGRESSjs_INIT)
         # Poll the snapshot once a second; the JSON state update is invisible.
         block.load(
             fn=scanner.get_progress,
@@ -669,6 +669,6 @@ def build_tab() -> gr.Blocks:
             fn=None,
             inputs=scan_progress_state,
             outputs=None,
-            _js="(snap) => { try { window.msUpdateProgressBar(snap); } catch(e) {} }",
+            js="(snap) => { try { window.msUpdateProgressBar(snap); } catch(e) {} }",
         )
     return block
