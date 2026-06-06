@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import html
 import os
-import time
 from typing import Any, List, Optional, Tuple
 
 import gradio as gr
@@ -25,82 +24,130 @@ PAGE_SIZE = 60
 # Scan tab
 # ---------------------------------------------------------------------------
 
-def _progress_bar_html(p: dict) -> str:
-    running = bool(p.get("running"))
-    counting = bool(p.get("counting"))
-    total = int(p.get("total_files") or 0)
-    seen = int(p.get("total_seen") or 0)
-    finished = bool(p.get("finished_at")) and not running
-
-    # Idle, no scan ever ran in this session — render nothing.
-    if not running and not finished:
-        return ""
-
-    if running and (counting or total <= 0):
-        label = "Counting files…"
-        pct = 0
-        # Striped/animated background hints at indeterminate state.
-        fill_style = (
-            "width: 100%;"
-            "background-image: linear-gradient(45deg,"
-            " rgba(255,255,255,0.25) 25%, transparent 25%,"
-            " transparent 50%, rgba(255,255,255,0.25) 50%,"
-            " rgba(255,255,255,0.25) 75%, transparent 75%, transparent);"
-            "background-size: 24px 24px;"
-            "background-color: #4caf50;"
-        )
-    else:
-        if total > 0:
-            pct = max(0, min(100, int(round(100 * seen / total))))
-        else:
-            pct = 100 if finished else 0
-        suffix = "done" if finished else "scanning"
-        label = f"{seen} / {total}  ({pct}%) — {suffix}"
-        fill_style = f"width: {pct}%; background-color: {'#2e7d32' if finished else '#4caf50'};"
-
-    return (
-        '<div style="width: 100%; background-color: rgba(127,127,127,0.25);'
-        ' border-radius: 6px; overflow: hidden; height: 22px; position: relative;'
-        ' font-family: sans-serif;">'
-        f'<div style="{fill_style} height: 22px; transition: width 0.3s ease;"></div>'
-        '<div style="position: absolute; inset: 0; line-height: 22px;'
-        ' text-align: center; font-weight: 600; color: #fff;'
-        ' text-shadow: 0 0 2px rgba(0,0,0,0.6);">'
-        f'{html.escape(label)}'
-        '</div>'
-        '</div>'
-    )
+# Static DOM for the progress bar. Rendered once; never re-rendered by Gradio.
+# JS (registered in build_tab via block.load + js) mutates the inner nodes
+# in-place, so CSS transitions on width can apply and the component never
+# blinks the way a polled gr.HTML / gr.Markdown does.
+_PROGRESS_STATIC_HTML = """
+<div id="ms-progress-shell" style="
+  width: 100%;
+  background-color: rgba(127,127,127,0.25);
+  border-radius: 6px;
+  overflow: hidden;
+  height: 22px;
+  position: relative;
+  font-family: sans-serif;
+  display: none;
+">
+  <div id="ms-progress-bar-fill" style="
+    width: 0%;
+    height: 22px;
+    background-color: #4caf50;
+    transition: width 0.8s ease-out, background-color 0.3s ease;
+  "></div>
+  <div id="ms-progress-bar-label" style="
+    position: absolute;
+    inset: 0;
+    line-height: 22px;
+    text-align: center;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 0 2px rgba(0,0,0,0.6);
+    pointer-events: none;
+  "></div>
+</div>
+<div id="ms-progress-status" style="margin-top: 8px; font-family: inherit;"></div>
+"""
 
 
-def _format_progress(p: dict) -> str:
-    lines = []
-    if p["running"]:
-        state = "counting files" if p.get("counting") else "running"
-    else:
-        state = "idle" if p["finished_at"] == 0.0 else "finished"
-    lines.append(f"**State:** {state}")
-    if p["started_at"]:
-        lines.append(f"Started: {time.strftime('%H:%M:%S', time.localtime(p['started_at']))}")
-    if p["finished_at"]:
-        elapsed = p["finished_at"] - p["started_at"]
-        lines.append(f"Finished: {time.strftime('%H:%M:%S', time.localtime(p['finished_at']))} (in {elapsed:0.1f}s)")
-    lines.append("")
-    total = int(p.get("total_files") or 0)
-    seen_str = f"**{p['total_seen']}**" + (f" / **{total}**" if total else "")
-    lines.append(f"- Seen: {seen_str}")
-    lines.append(f"- Inserted: **{p['inserted']}**")
-    lines.append(f"- Updated: **{p['updated']}**")
-    lines.append(f"- Skipped (unchanged): **{p['skipped_unchanged']}**")
-    lines.append(f"- Parse failed: **{p['parse_failed']}**")
-    if p.get("current_path"):
-        lines.append("")
-        lines.append(f"Current: `{p['current_path']}`")
-    if p.get("errors"):
-        lines.append("")
-        lines.append("Recent errors:")
-        for e in p["errors"]:
-            lines.append(f"- {e}")
-    return "\n".join(lines)
+# Page-load script: defines window.msUpdateProgressBar(snap) which mutates the
+# bar's DOM in place. Gradio just keeps a hidden gr.JSON in sync with
+# scanner.get_progress(); its .change event runs this with the new snapshot.
+_PROGRESSjs_INIT = r"""
+() => {
+  window.msUpdateProgressBar = function(snap) {
+    if (!snap) return;
+    var shell = document.getElementById('ms-progress-shell');
+    var fill = document.getElementById('ms-progress-bar-fill');
+    var label = document.getElementById('ms-progress-bar-label');
+    var status = document.getElementById('ms-progress-status');
+    if (!shell || !fill || !label || !status) return;
+
+    var running = !!snap.running;
+    var counting = !!snap.counting;
+    var total = +snap.total_files || 0;
+    var seen = +snap.total_seen || 0;
+    var finished = !!snap.finished_at && !running;
+
+    if (!running && !finished) {
+      shell.style.display = 'none';
+    } else {
+      shell.style.display = 'block';
+      if (running && (counting || total <= 0)) {
+        fill.style.width = '100%';
+        fill.style.backgroundColor = '#4caf50';
+        fill.style.backgroundImage = 'linear-gradient(45deg,' +
+          ' rgba(255,255,255,0.25) 25%, transparent 25%,' +
+          ' transparent 50%, rgba(255,255,255,0.25) 50%,' +
+          ' rgba(255,255,255,0.25) 75%, transparent 75%, transparent)';
+        fill.style.backgroundSize = '24px 24px';
+        label.textContent = 'Counting files…';
+      } else {
+        var pct = total > 0
+          ? Math.max(0, Math.min(100, Math.round(100 * seen / total)))
+          : (finished ? 100 : 0);
+        fill.style.width = pct + '%';
+        fill.style.backgroundImage = 'none';
+        fill.style.backgroundColor = finished ? '#2e7d32' : '#4caf50';
+        var suffix = finished ? 'done' : 'scanning';
+        label.textContent = seen + ' / ' + total + '  (' + pct + '%) — ' + suffix;
+      }
+    }
+
+    var esc = function(s) {
+      return String(s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    };
+    var lines = [];
+    var state = running
+      ? (counting ? 'counting files' : 'running')
+      : (snap.finished_at ? 'finished' : 'idle');
+    lines.push('<div><strong>State:</strong> ' + state + '</div>');
+    if (snap.started_at) {
+      lines.push('<div>Started: ' +
+        new Date(snap.started_at * 1000).toLocaleTimeString() + '</div>');
+    }
+    if (snap.finished_at) {
+      var el = (snap.finished_at - snap.started_at).toFixed(1);
+      lines.push('<div>Finished: ' +
+        new Date(snap.finished_at * 1000).toLocaleTimeString() +
+        ' (in ' + el + 's)</div>');
+    }
+    lines.push('<ul style="margin: 6px 0 0 18px;">');
+    var seenStr = '<strong>' + seen + '</strong>' +
+      (total ? ' / <strong>' + total + '</strong>' : '');
+    lines.push('<li>Seen: ' + seenStr + '</li>');
+    lines.push('<li>Inserted: <strong>' + (+snap.inserted || 0) + '</strong></li>');
+    lines.push('<li>Updated: <strong>' + (+snap.updated || 0) + '</strong></li>');
+    lines.push('<li>Skipped (unchanged): <strong>' + (+snap.skipped_unchanged || 0) + '</strong></li>');
+    lines.push('<li>Parse failed: <strong>' + (+snap.parse_failed || 0) + '</strong></li>');
+    lines.push('</ul>');
+    if (snap.current_path) {
+      lines.push('<div style="margin-top: 6px;">Current: <code>' +
+        esc(snap.current_path) + '</code></div>');
+    }
+    if (snap.errors && snap.errors.length) {
+      lines.push('<div style="margin-top: 6px;">Recent errors:' +
+        '<ul style="margin-left: 18px;">');
+      for (var i = 0; i < snap.errors.length; i++) {
+        lines.push('<li>' + esc(snap.errors[i]) + '</li>');
+      }
+      lines.push('</ul></div>');
+    }
+    status.innerHTML = lines.join('');
+  };
+}
+"""
 
 
 def _scan_roots_markdown() -> str:
@@ -112,52 +159,32 @@ def _scan_roots_markdown() -> str:
     return "\n".join(lines)
 
 
-def _build_scan_tab() -> Tuple[gr.Markdown, gr.Markdown]:
+def _build_scan_tab() -> Tuple[gr.JSON, gr.Markdown]:
     with gr.Column():
         roots_md = gr.Markdown(_scan_roots_markdown())
         with gr.Row():
             scan_btn = gr.Button("Scan", variant="primary")
             full_rescan = gr.Checkbox(label="Force full rescan", value=False)
             refresh_btn = gr.Button("Refresh status")
-        # Auto-polling progress bar — Gradio re-invokes these callables every
-        # `every` seconds on the client while the page is open.
-        progress_bar = gr.HTML(
-            value=lambda: _progress_bar_html(scanner.get_progress()),
-            every=1.0,
-        )
-        progress_md = gr.Markdown(
-            value=lambda: _format_progress(scanner.get_progress()),
-            every=1.0,
+        # Static DOM (rendered once). build_tab() wires up periodic polling +
+        # a JS DOM-mutation function — see _PROGRESSjs_INIT.
+        gr.HTML(_PROGRESS_STATIC_HTML)
+        progress_state = gr.JSON(
+            value=scanner.get_progress(),
+            visible=False,
         )
 
     def _do_scan(force: bool):
         scanner.start_scan(full_rescan=bool(force))
-        snap = scanner.get_progress()
-        return (
-            _progress_bar_html(snap),
-            _format_progress(snap),
-            _scan_roots_markdown(),
-        )
+        return scanner.get_progress()
 
     def _do_refresh():
-        snap = scanner.get_progress()
-        return (
-            _progress_bar_html(snap),
-            _format_progress(snap),
-            _scan_roots_markdown(),
-        )
+        return scanner.get_progress(), _scan_roots_markdown()
 
-    scan_btn.click(
-        _do_scan,
-        inputs=full_rescan,
-        outputs=[progress_bar, progress_md, roots_md],
-    )
-    refresh_btn.click(
-        _do_refresh,
-        outputs=[progress_bar, progress_md, roots_md],
-    )
+    scan_btn.click(_do_scan, inputs=full_rescan, outputs=progress_state)
+    refresh_btn.click(_do_refresh, outputs=[progress_state, roots_md])
 
-    return progress_md, roots_md
+    return progress_state, roots_md
 
 
 # ---------------------------------------------------------------------------
@@ -620,11 +647,28 @@ def build_tab() -> gr.Blocks:
         gr.Markdown("## Metadata Statistics")
         with gr.Tabs():
             with gr.TabItem("Scan"):
-                _build_scan_tab()
+                scan_progress_state, _ = _build_scan_tab()
             with gr.TabItem("Statistics"):
                 _build_stats_tab()
             with gr.TabItem("Search"):
                 _build_search_tab()
             with gr.TabItem("Categories"):
                 _build_categories_tab()
+
+        # Register the in-place DOM updater once on page load.
+        block.load(fn=None, inputs=None, outputs=None, js=_PROGRESSjs_INIT)
+        # Poll the snapshot once a second; the JSON state update is invisible.
+        block.load(
+            fn=scanner.get_progress,
+            outputs=scan_progress_state,
+            every=1.0,
+        )
+        # Whenever the snapshot changes, run JS to mutate the bar in-place.
+        # No Python re-render of the bar/status, so no flicker.
+        scan_progress_state.change(
+            fn=None,
+            inputs=scan_progress_state,
+            outputs=None,
+            js="(snap) => { try { window.msUpdateProgressBar(snap); } catch(e) {} }",
+        )
     return block
