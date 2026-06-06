@@ -25,11 +25,59 @@ PAGE_SIZE = 60
 # Scan tab
 # ---------------------------------------------------------------------------
 
+def _progress_bar_html(p: dict) -> str:
+    running = bool(p.get("running"))
+    counting = bool(p.get("counting"))
+    total = int(p.get("total_files") or 0)
+    seen = int(p.get("total_seen") or 0)
+    finished = bool(p.get("finished_at")) and not running
+
+    # Idle, no scan ever ran in this session — render nothing.
+    if not running and not finished:
+        return ""
+
+    if running and (counting or total <= 0):
+        label = "Counting files…"
+        pct = 0
+        # Striped/animated background hints at indeterminate state.
+        fill_style = (
+            "width: 100%;"
+            "background-image: linear-gradient(45deg,"
+            " rgba(255,255,255,0.25) 25%, transparent 25%,"
+            " transparent 50%, rgba(255,255,255,0.25) 50%,"
+            " rgba(255,255,255,0.25) 75%, transparent 75%, transparent);"
+            "background-size: 24px 24px;"
+            "background-color: #4caf50;"
+        )
+    else:
+        if total > 0:
+            pct = max(0, min(100, int(round(100 * seen / total))))
+        else:
+            pct = 100 if finished else 0
+        suffix = "done" if finished else "scanning"
+        label = f"{seen} / {total}  ({pct}%) — {suffix}"
+        fill_style = f"width: {pct}%; background-color: {'#2e7d32' if finished else '#4caf50'};"
+
+    return (
+        '<div style="width: 100%; background-color: rgba(127,127,127,0.25);'
+        ' border-radius: 6px; overflow: hidden; height: 22px; position: relative;'
+        ' font-family: sans-serif;">'
+        f'<div style="{fill_style} height: 22px; transition: width 0.3s ease;"></div>'
+        '<div style="position: absolute; inset: 0; line-height: 22px;'
+        ' text-align: center; font-weight: 600; color: #fff;'
+        ' text-shadow: 0 0 2px rgba(0,0,0,0.6);">'
+        f'{html.escape(label)}'
+        '</div>'
+        '</div>'
+    )
+
+
 def _format_progress(p: dict) -> str:
     lines = []
-    state = "running" if p["running"] else (
-        "idle" if p["finished_at"] == 0.0 else "finished"
-    )
+    if p["running"]:
+        state = "counting files" if p.get("counting") else "running"
+    else:
+        state = "idle" if p["finished_at"] == 0.0 else "finished"
     lines.append(f"**State:** {state}")
     if p["started_at"]:
         lines.append(f"Started: {time.strftime('%H:%M:%S', time.localtime(p['started_at']))}")
@@ -37,7 +85,9 @@ def _format_progress(p: dict) -> str:
         elapsed = p["finished_at"] - p["started_at"]
         lines.append(f"Finished: {time.strftime('%H:%M:%S', time.localtime(p['finished_at']))} (in {elapsed:0.1f}s)")
     lines.append("")
-    lines.append(f"- Seen: **{p['total_seen']}**")
+    total = int(p.get("total_files") or 0)
+    seen_str = f"**{p['total_seen']}**" + (f" / **{total}**" if total else "")
+    lines.append(f"- Seen: {seen_str}")
     lines.append(f"- Inserted: **{p['inserted']}**")
     lines.append(f"- Updated: **{p['updated']}**")
     lines.append(f"- Skipped (unchanged): **{p['skipped_unchanged']}**")
@@ -69,18 +119,43 @@ def _build_scan_tab() -> Tuple[gr.Markdown, gr.Markdown]:
             scan_btn = gr.Button("Scan", variant="primary")
             full_rescan = gr.Checkbox(label="Force full rescan", value=False)
             refresh_btn = gr.Button("Refresh status")
-        progress_md = gr.Markdown(_format_progress(scanner.get_progress()))
+        # Auto-polling progress bar — Gradio re-invokes these callables every
+        # `every` seconds on the client while the page is open.
+        progress_bar = gr.HTML(
+            value=lambda: _progress_bar_html(scanner.get_progress()),
+            every=1.0,
+        )
+        progress_md = gr.Markdown(
+            value=lambda: _format_progress(scanner.get_progress()),
+            every=1.0,
+        )
 
     def _do_scan(force: bool):
         scanner.start_scan(full_rescan=bool(force))
-        # Return updated markdown right away
-        return _format_progress(scanner.get_progress()), _scan_roots_markdown()
+        snap = scanner.get_progress()
+        return (
+            _progress_bar_html(snap),
+            _format_progress(snap),
+            _scan_roots_markdown(),
+        )
 
     def _do_refresh():
-        return _format_progress(scanner.get_progress()), _scan_roots_markdown()
+        snap = scanner.get_progress()
+        return (
+            _progress_bar_html(snap),
+            _format_progress(snap),
+            _scan_roots_markdown(),
+        )
 
-    scan_btn.click(_do_scan, inputs=full_rescan, outputs=[progress_md, roots_md])
-    refresh_btn.click(_do_refresh, outputs=[progress_md, roots_md])
+    scan_btn.click(
+        _do_scan,
+        inputs=full_rescan,
+        outputs=[progress_bar, progress_md, roots_md],
+    )
+    refresh_btn.click(
+        _do_refresh,
+        outputs=[progress_bar, progress_md, roots_md],
+    )
 
     return progress_md, roots_md
 

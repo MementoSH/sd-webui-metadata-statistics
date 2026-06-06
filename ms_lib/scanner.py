@@ -18,6 +18,8 @@ class ScanProgress:
     started_at: float = 0.0
     finished_at: float = 0.0
     running: bool = False
+    counting: bool = False       # in the initial "count total files" phase
+    total_files: int = 0         # total PNGs discovered up-front (0 while still counting)
     total_seen: int = 0          # PNGs visited on disk
     inserted: int = 0            # new images added
     updated: int = 0             # changed images re-indexed
@@ -29,8 +31,10 @@ class ScanProgress:
     def snapshot(self) -> dict:
         return {
             "running": self.running,
+            "counting": self.counting,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "total_files": self.total_files,
             "total_seen": self.total_seen,
             "inserted": self.inserted,
             "updated": self.updated,
@@ -127,8 +131,10 @@ def _scan_worker(*, full_rescan: bool, on_done: Optional[Callable[[], None]] = N
     db.init_db()
     _set_progress(
         running=True,
+        counting=True,
         started_at=time.time(),
         finished_at=0.0,
+        total_files=0,
         total_seen=0,
         inserted=0,
         updated=0,
@@ -140,7 +146,14 @@ def _scan_worker(*, full_rescan: bool, on_done: Optional[Callable[[], None]] = N
 
     roots = paths.outputs_roots()
     try:
-        for path in _walk_pngs(roots):
+        # Phase 1: count files so the UI can show a determinate progress bar.
+        # We materialize the list so the second pass cannot disagree with the count
+        # if files are added/removed mid-scan.
+        all_paths = list(_walk_pngs(roots))
+        _set_progress(counting=False, total_files=len(all_paths))
+
+        # Phase 2: index files.
+        for path in all_paths:
             try:
                 _set_progress(current_path=path, total_seen=_progress.total_seen + 1)
                 result = _index_file(path, full_rescan=full_rescan)
@@ -157,7 +170,7 @@ def _scan_worker(*, full_rescan: bool, on_done: Optional[Callable[[], None]] = N
                 with _progress_lock:
                     _progress.errors.append(f"{path}: {e!r}")
     finally:
-        _set_progress(running=False, finished_at=time.time(), current_path=None)
+        _set_progress(running=False, counting=False, current_path=None, finished_at=time.time())
         if on_done is not None:
             try:
                 on_done()
